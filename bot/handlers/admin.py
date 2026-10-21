@@ -23,7 +23,7 @@ from ..utils import (
 router = Router(name="admin")
 
 NOT_COMMAND = F.text & ~F.text.startswith("/")
-BACK_ADMIN = ("⬅️ Управление", "adm")
+BACK_ADMIN = ("Назад к управлению", "adm")
 
 
 class CreateGroup(StatesGroup):
@@ -52,6 +52,10 @@ class AddMembers(StatesGroup):
 
 class SetSheet(StatesGroup):
     url = State()
+
+
+class DeleteGroup(StatesGroup):
+    confirm = State()
 
 
 def members_format_hint(subgroups_count: int) -> str:
@@ -87,7 +91,7 @@ async def cmd_creategroup(message: Message, state: FSMContext, member: dict | No
         await message.answer("Вы уже состоите в группе. Чтобы создать новую, сначала выйдите: /logout")
         return
     await state.set_state(CreateGroup.name)
-    await message.answer("👑 Создание группы.\n<b>Шаг 1/4.</b> Введите название группы (например, ИВТ-21).\n/cancel — отмена")
+    await message.answer("Создание группы.\n<b>Шаг 1/4.</b> Введите название группы (например, ИВТ-21).\n/cancel — отмена")
 
 
 @router.message(CreateGroup.name, NOT_COMMAND)
@@ -137,7 +141,7 @@ async def cg_members(message: Message, state: FSMContext, bot: Bot, db: Database
         parsed, errors = parse_members(message.text, count)
     if errors:
         bad = "\n".join(f"• {escape(e)}" for e in errors[:15])
-        await message.answer(f"⚠️ Не удалось разобрать строки:\n{bad}\n\n{members_format_hint(count)}\n\n"
+        await message.answer(f"Не удалось разобрать строки:\n{bad}\n\n{members_format_hint(count)}\n\n"
                              "Отправьте список целиком ещё раз.")
         return
     if await db.get_member_by_tg(message.from_user.id):
@@ -152,10 +156,10 @@ async def cg_members(message: Message, state: FSMContext, bot: Bot, db: Database
     await state.clear()
 
     me = await bot.get_me()
-    text = f"✅ Группа <b>{escape(data['name'])}</b> создана!\nВаш код (на случай повторного входа): <code>{headman['code']}</code>\n"
+    text = f"Группа <b>{escape(data['name'])}</b> создана!\nВаш код (на случай повторного входа): <code>{headman['code']}</code>\n"
     if created:
-        text += "\n🔑 <b>Коды участников</b> (разошлите каждому его код):\n" + codes_text(created, me.username)
-    text += "\n\nДальше добавьте предметы: /menu → 👑 Управление → 📚 Предметы."
+        text += "\n<b>Коды участников</b> (разошлите каждому его код):\n" + codes_text(created, me.username)
+    text += "\n\nДальше добавьте предметы: /menu → Управление → Предметы."
     await send_long(message, text)
 
 
@@ -171,31 +175,71 @@ async def cb_admin(call: CallbackQuery, state: FSMContext, db: Database, member:
     subjects = await db.list_subjects(group["id"])
     linked = sum(1 for m in members if m["tg_id"])
     text = (
-        f"👑 <b>Управление группой {escape(group['name'])}</b>\n"
+        f"<b>Управление группой {escape(group['name'])}</b>\n"
         f"Участников: {len(members)} (вошли в бота: {linked})\n"
         f"Подгрупп: {group['subgroups_count']} · Предметов: {len(subjects)}"
     )
     await edit(call, text, kb(
-        [("📚 Предметы", "as"), ("📅 Пары и опросы", "al")],
-        [("✏️ Редактировать очередь", "aq")],
-        [("👥 Участники", "am"), ("📊 Google Таблицы", "ag")],
-        [("⬅️ Главное меню", "m:main")],
+        [("Предметы", "as"), ("Пары и опросы", "al")],
+        [("Редактировать очередь", "aq")],
+        [("Участники", "am"), ("Google Таблицы", "ag")],
+        [("Удалить группу", "agdel")],
+        [("Главное меню", "m:main")],
     ))
     await call.answer()
+
+
+# ======================= удаление группы =======================
+
+@router.callback_query(F.data == "agdel")
+async def cb_group_delete(call: CallbackQuery, state: FSMContext, db: Database, member: dict | None):
+    if not await guard_headman(call, member):
+        return
+    group = await db.get_group(member["group_id"])
+    await state.set_state(DeleteGroup.confirm)
+    await edit(
+        call,
+        f"<b>Удаление группы {escape(group['name'])}</b>\n\n"
+        "Будут безвозвратно удалены все участники, их коды, предметы, пары и очереди. "
+        "Участники получат уведомление и больше не смогут войти.\n\n"
+        f"Чтобы подтвердить, отправьте название группы: <code>{escape(group['name'])}</code>",
+        kb([("Отмена", "adm")]),
+    )
+    await call.answer()
+
+
+@router.message(DeleteGroup.confirm, NOT_COMMAND)
+async def group_delete_confirm(message: Message, state: FSMContext, bot: Bot, db: Database,
+                               member: dict | None):
+    if not member or not member["is_headman"]:
+        await state.clear()
+        return
+    group = await db.get_group(member["group_id"])
+    if normalize_name(message.text) != normalize_name(group["name"]):
+        await message.answer("Название не совпадает. Отправьте его ещё раз или /cancel, чтобы отменить.")
+        return
+    await state.clear()
+    others = [m for m in await db.list_members(group["id"]) if m["tg_id"] and m["id"] != member["id"]]
+    await db.delete_group(group["id"])
+    for m in others:
+        await notify(bot, m["tg_id"], f"Староста удалил группу {escape(group['name'])}. Очереди больше недоступны.")
+    await message.answer(
+        f"Группа {escape(group['name'])} удалена.\nЧтобы создать новую, отправьте /creategroup."
+    )
 
 
 # ======================= предметы =======================
 
 async def subjects_admin_view(db: Database, member: dict):
     subjects = await db.list_subjects(member["group_id"])
-    lines = ["📚 <b>Предметы</b>", ""]
+    lines = ["<b>Предметы</b>", ""]
     if not subjects:
         lines.append("Пока нет ни одного предмета.")
     for s in subjects:
         kind = "по подгруппам" if s["is_subgroup"] else "общий"
         lines.append(f"• {escape(s['name'])} — {kind}")
-    rows = [[("➕ Добавить предмет", "asa")]]
-    rows += [[(f"🗑 {s['name']}", f"asd:{s['id']}")] for s in subjects]
+    rows = [[("Добавить предмет", "asa")]]
+    rows += [[(f"{s['name']}", f"asd:{s['id']}")] for s in subjects]
     rows.append([BACK_ADMIN])
     return "\n".join(lines), kb(*rows)
 
@@ -215,7 +259,7 @@ async def cb_subject_add(call: CallbackQuery, state: FSMContext, member: dict | 
     if not await guard_headman(call, member):
         return
     await state.set_state(AddSubject.name)
-    await edit(call, "Введите название предмета:", kb([("⬅️ Отмена", "as")]))
+    await edit(call, "Введите название предмета:", kb([("Отмена", "as")]))
     await call.answer()
 
 
@@ -234,16 +278,16 @@ async def subject_name(message: Message, state: FSMContext, db: Database, member
         await state.clear()
         await db.add_subject(member["group_id"], name, False)
         text, markup = await subjects_admin_view(db, member)
-        await message.answer(f"✅ Предмет «{escape(name)}» добавлен.")
+        await message.answer(f"Предмет «{escape(name)}» добавлен.")
         await message.answer(text, reply_markup=markup)
         return
     await state.update_data(name=name)
     await state.set_state(AddSubject.kind)
     await message.answer(
         f"Как проходят лабораторные по «{escape(name)}»?",
-        reply_markup=kb([("👥 Вся группа вместе (общая очередь)", "ast:0")],
-                        [("🔀 По подгруппам (своя очередь у каждой)", "ast:1")],
-                        [("⬅️ Отмена", "as")]),
+        reply_markup=kb([("Вся группа вместе (общая очередь)", "ast:0")],
+                        [("По подгруппам (своя очередь у каждой)", "ast:1")],
+                        [("Отмена", "as")]),
     )
 
 
@@ -268,7 +312,7 @@ async def cb_subject_delete(call: CallbackQuery, db: Database, member: dict | No
         await call.answer("Предмет не найден", show_alert=True)
         return
     await edit(call, f"Удалить предмет «{escape(subject['name'])}»? Его очереди и пары тоже удалятся.",
-               kb([("🗑 Да, удалить", f"asdy:{subject['id']}"), ("⬅️ Назад", "as")]))
+               kb([("Да, удалить", f"asdy:{subject['id']}"), ("Назад", "as")]))
     await call.answer()
 
 
@@ -293,10 +337,10 @@ def lesson_label(lesson: dict, subject_name: str) -> str:
 
 async def lessons_admin_view(db: Database, member: dict):
     lessons = (await db.group_lessons(member["group_id"]))[:30]
-    rows = [[("➕ Добавить пару", "ala")]]
+    rows = [[("Добавить пару", "ala")]]
     rows += [[(lesson_label(l, l["subject_name"]), f"alv:{l['id']}")] for l in lessons]
     rows.append([BACK_ADMIN])
-    text = "📅 <b>Пары</b>\nВыберите пару, чтобы отправить опрос или посмотреть ответы."
+    text = "<b>Пары</b>\nВыберите пару, чтобы отправить опрос или посмотреть ответы."
     if not lessons:
         text += "\n\nЗапланированных пар нет."
     return text, kb(*rows)
@@ -320,8 +364,8 @@ async def cb_lesson_add(call: CallbackQuery, db: Database, member: dict | None):
     if not subjects:
         await call.answer("Сначала добавьте предмет", show_alert=True)
         return
-    rows = [[(f"📘 {s['name']}", f"alas:{s['id']}")] for s in subjects]
-    rows.append([("⬅️ Назад", "al")])
+    rows = [[(f"{s['name']}", f"alas:{s['id']}")] for s in subjects]
+    rows.append([("Назад", "al")])
     await edit(call, "По какому предмету пара?", kb(*rows))
     await call.answer()
 
@@ -335,7 +379,7 @@ async def ask_lesson_time(call: CallbackQuery, state: FSMContext, subject: dict,
         f"Введите дату и время начала: <code>ДД.ММ ЧЧ:ММ</code> или <code>ДД.ММ.ГГГГ ЧЧ:ММ</code>.\n"
         f"Через пробел можно указать длительность в минутах (по умолчанию {DEFAULT_LESSON_MINUTES}).\n"
         f"Например: <code>24.10 10:40</code> или <code>24.10.2026 10:40 95</code>",
-        kb([("⬅️ Отмена", "al")]),
+        kb([("Отмена", "al")]),
     )
 
 
@@ -352,7 +396,7 @@ async def cb_lesson_subject(call: CallbackQuery, state: FSMContext, db: Database
         await ask_lesson_time(call, state, subject, 0)
     else:
         rows = [[(f"Подгруппа {sg}", f"alag:{subject['id']}:{sg}") for sg in subgroups]]
-        rows.append([("⬅️ Назад", "ala")])
+        rows.append([("Назад", "ala")])
         await edit(call, f"Для какой подгруппы пара по «{escape(subject['name'])}»?", kb(*rows))
     await call.answer()
 
@@ -374,18 +418,18 @@ async def lesson_view(db: Database, lesson: dict, subject: dict):
     members = await db.scope_members(subject["group_id"], lesson["subgroup"])
     answers = await db.poll_answers(lesson["id"])
     start, end = lesson_bounds(lesson)
-    status = "🟢 идёт сейчас" if start <= now_utc() < end else "⏳ запланирована"
+    status = "идёт сейчас" if start <= now_utc() < end else "запланирована"
     text = (
-        f"📅 <b>{escape(scope_title(subject, lesson['subgroup']))}</b>\n"
+        f"<b>{escape(scope_title(subject, lesson['subgroup']))}</b>\n"
         f"Начало: {fmt_dt(start)}\nДлительность: {lesson['duration_min']} мин · {status}\n"
         f"Ответили на опрос: {len(answers)} из {len(members)}"
     )
     lid = lesson["id"]
     markup = kb(
-        [("📣 Отправить опрос", f"alp:{lid}")],
-        [("📊 Ответы на опрос", f"alr:{lid}")],
-        [("🗑 Удалить пару", f"ald:{lid}")],
-        [("⬅️ К парам", "al")],
+        [("Отправить опрос", f"alp:{lid}")],
+        [("Ответы на опрос", f"alr:{lid}")],
+        [("Удалить пару", f"ald:{lid}")],
+        [("К парам", "al")],
     )
     return text, markup
 
@@ -414,7 +458,7 @@ async def lesson_when(message: Message, state: FSMContext, db: Database, member:
         return
     lesson_id = await db.add_lesson(subject["id"], data["subgroup"], start, duration)
     text, markup = await lesson_view(db, await db.get_lesson(lesson_id), subject)
-    await message.answer("✅ Пара добавлена. Можно сразу отправить опрос.")
+    await message.answer("Пара добавлена. Можно сразу отправить опрос.")
     await message.answer(text, reply_markup=markup)
 
 
@@ -450,7 +494,7 @@ async def cb_lesson_poll(call: CallbackQuery, bot: Bot, db: Database, member: di
     await call.answer("Отправляю опрос…")
     sent, total = await send_poll(bot, db, lesson, subject)
     text, markup = await lesson_view(db, lesson, subject)
-    note = f"\n\n📣 Опрос доставлен: {sent} из {total}."
+    note = f"\n\nОпрос доставлен: {sent} из {total}."
     if sent < total:
         note += " Остальные ещё не вошли в бота или заблокировали его."
     await edit(call, text + note, markup)
@@ -472,12 +516,12 @@ async def cb_lesson_results(call: CallbackQuery, db: Database, member: dict | No
         return f"{title} ({len(items)}):\n{names}"
 
     text = "\n\n".join([
-        f"📊 <b>Ответы: {escape(scope_title(subject, lesson['subgroup']))}</b>, {fmt_dt(lesson_bounds(lesson)[0])}",
-        block("✅ Будут сдавать", yes),
-        block("❌ Не будут", no),
-        block("❔ Не ответили", none),
+        f"<b>Ответы: {escape(scope_title(subject, lesson['subgroup']))}</b>, {fmt_dt(lesson_bounds(lesson)[0])}",
+        block("Будут сдавать", yes),
+        block("Не будут", no),
+        block("Не ответили", none),
     ])
-    await edit(call, text[:4000], kb([("⬅️ К паре", f"alv:{lesson['id']}")]))
+    await edit(call, text[:4000], kb([("К паре", f"alv:{lesson['id']}")]))
     await call.answer()
 
 
@@ -487,7 +531,7 @@ async def cb_lesson_delete(call: CallbackQuery, db: Database, member: dict | Non
     if not lesson:
         return
     await edit(call, f"Удалить пару {escape(lesson_label(lesson, subject['name']))}?",
-               kb([("🗑 Да, удалить", f"aldy:{lesson['id']}"), ("⬅️ Назад", f"alv:{lesson['id']}")]))
+               kb([("Да, удалить", f"aldy:{lesson['id']}"), ("Назад", f"alv:{lesson['id']}")]))
     await call.answer()
 
 
@@ -513,9 +557,9 @@ async def cb_edit_choose(call: CallbackQuery, state: FSMContext, db: Database, m
     if not subjects:
         await call.answer("Сначала добавьте предмет", show_alert=True)
         return
-    rows = [[(f"📘 {s['name']}", f"aqs:{s['id']}")] for s in subjects]
+    rows = [[(f"{s['name']}", f"aqs:{s['id']}")] for s in subjects]
     rows.append([BACK_ADMIN])
-    await edit(call, "✏️ Очередь какого предмета редактировать?", kb(*rows))
+    await edit(call, "Очередь какого предмета редактировать?", kb(*rows))
     await call.answer()
 
 
@@ -533,7 +577,7 @@ async def cb_edit_subject(call: CallbackQuery, state: FSMContext, db: Database, 
         text, markup = await edit_view(db, qs, subject, 0)
         await edit(call, text, markup)
     else:
-        rows = [[(f"Подгруппа {sg}", f"e:{subject['id']}:{sg}") for sg in subgroups], [("⬅️ Назад", "aq")]]
+        rows = [[(f"Подгруппа {sg}", f"e:{subject['id']}:{sg}") for sg in subgroups], [("Назад", "aq")]]
         await edit(call, f"Очередь какой подгруппы по «{escape(subject['name'])}»?", kb(*rows))
     await call.answer()
 
@@ -541,13 +585,13 @@ async def cb_edit_subject(call: CallbackQuery, state: FSMContext, db: Database, 
 async def edit_view(db: Database, qs: QueueService, subject: dict, sg: int):
     sid = subject["id"]
     text = await render_queue(db, qs, subject, sg)
-    text += "\n\n✏️ Нажмите на участника, чтобы переместить его, отметить сдачу или убрать из очереди."
+    text += "\n\nНажмите на участника, чтобы переместить его, отметить сдачу или убрать из очереди."
     rows = [
-        [(f"{i}. {e['full_name']}" + (" 🟡" if e["excused"] else ""), f"eo:{sid}:{e['member_id']}")]
+        [(f"{i}. {e['full_name']}" + (" (уваж.)" if e["excused"] else ""), f"eo:{sid}:{e['member_id']}")]
         for i, e in enumerate(await qs.entries(sid, sg), 1)
     ]
-    rows.append([("➕ Добавить участника", f"ea:{sid}:{sg}"), ("🧹 Очистить", f"ec:{sid}:{sg}")])
-    rows.append([("🔄 Обновить", f"e:{sid}:{sg}"), ("⬅️ К предметам", "aq")])
+    rows.append([("Добавить участника", f"ea:{sid}:{sg}"), ("Очистить", f"ec:{sid}:{sg}")])
+    rows.append([("Обновить", f"e:{sid}:{sg}"), ("К предметам", "aq")])
     return text, kb(*rows)
 
 
@@ -594,17 +638,17 @@ async def entry_view(qs: QueueService, subject: dict, target: dict, sg: int):
     pos = entries.index(entry) + 1
     excuse = f"да ({escape(entry['excuse_reason'] or '')})" if entry["excused"] else "нет"
     text = (
-        f"✏️ <b>{escape(scope_title(subject, sg))}</b>\n\n"
+        f"<b>{escape(scope_title(subject, sg))}</b>\n\n"
         f"Участник: <b>{escape(target['full_name'])}</b>\n"
         f"Место: {pos} из {len(entries)}\n"
         f"Уважительная причина: {excuse}"
     )
     p = f"em:{sid}:{mid}"
     markup = kb(
-        [("⏫ В начало", f"{p}:top"), ("⬆️", f"{p}:up"), ("⬇️", f"{p}:down"), ("⏬ В конец", f"{p}:end")],
-        [("🔢 На место №…", f"{p}:pos")],
-        [("✅ Сдал", f"{p}:done"), ("🟡 Уваж. причина", f"{p}:exc"), ("❌ Убрать", f"{p}:del")],
-        [("⬅️ К очереди", f"e:{sid}:{sg}")],
+        [("В начало", f"{p}:top"), ("Выше", f"{p}:up"), ("Ниже", f"{p}:down"), ("В конец", f"{p}:end")],
+        [("На место №…", f"{p}:pos")],
+        [("Сдал", f"{p}:done"), ("Уваж. причина", f"{p}:exc"), ("Убрать", f"{p}:del")],
+        [("К очереди", f"e:{sid}:{sg}")],
     )
     return text, markup
 
@@ -640,7 +684,7 @@ async def cb_entry_op(call: CallbackQuery, state: FSMContext, bot: Bot, db: Data
         await state.set_state(MovePos.pos)
         await state.update_data(subject_id=sid, member_id=mid)
         await edit(call, f"На какое место поставить {escape(target['full_name'])}? Отправьте число.",
-                   kb([("⬅️ Отмена", f"eo:{sid}:{mid}")]))
+                   kb([("Отмена", f"eo:{sid}:{mid}")]))
         await call.answer()
         return
 
@@ -648,7 +692,7 @@ async def cb_entry_op(call: CallbackQuery, state: FSMContext, bot: Bot, db: Data
     answer = "Готово"
     if op in ("done", "del"):
         await qs.remove(sid, sg, mid)
-        msg = "✅ Староста отметил, что вы сдали лабораторную" if op == "done" else "Староста убрал вас из очереди"
+        msg = "Староста отметил, что вы сдали лабораторную" if op == "done" else "Староста убрал вас из очереди"
         await notify(bot, target["tg_id"], f"{msg} ({title}).")
         await notify_if_first_changed(bot, db, qs, subject, sg, old_first)
         text, markup = await edit_view(db, qs, subject, sg)
@@ -671,7 +715,7 @@ async def cb_entry_op(call: CallbackQuery, state: FSMContext, bot: Bot, db: Data
         else:
             pos = await qs.move_to_end(sid, sg, mid)
         answer = f"Теперь место {pos}"
-        await notify(bot, target["tg_id"], f"✏️ Староста переместил вас в очереди {title}: теперь ваше место {pos}.")
+        await notify(bot, target["tg_id"], f"Староста переместил вас в очереди {title}: теперь ваше место {pos}.")
     await notify_if_first_changed(bot, db, qs, subject, sg, old_first)
     text, markup = await entry_view(qs, subject, target, sg)
     await edit(call, text, markup)
@@ -698,7 +742,7 @@ async def move_pos(message: Message, state: FSMContext, bot: Bot, db: Database, 
         await message.answer("Участника уже нет в очереди.")
         return
     await notify(bot, target["tg_id"],
-                 f"✏️ Староста переместил вас в очереди {escape(scope_title(subject, sg))}: теперь ваше место {pos}.")
+                 f"Староста переместил вас в очереди {escape(scope_title(subject, sg))}: теперь ваше место {pos}.")
     await notify_if_first_changed(bot, db, qs, subject, sg, old_first)
     text, markup = await entry_view(qs, subject, target, sg)
     await message.answer(text, reply_markup=markup)
@@ -708,7 +752,7 @@ async def add_candidates_view(db: Database, qs: QueueService, subject: dict, sg:
     in_queue = set(await qs.ids(subject["id"], sg))
     candidates = [m for m in await db.scope_members(subject["group_id"], sg) if m["id"] not in in_queue]
     rows = [[(m["full_name"], f"eaa:{subject['id']}:{sg}:{m['id']}")] for m in candidates]
-    rows.append([("⬅️ К очереди", f"e:{subject['id']}:{sg}")])
+    rows.append([("К очереди", f"e:{subject['id']}:{sg}")])
     text = "Кого добавить в конец очереди?" if candidates else "Все участники уже в очереди."
     return text, kb(*rows)
 
@@ -744,7 +788,7 @@ async def cb_edit_clear(call: CallbackQuery, db: Database, member: dict | None):
     if not subject:
         return
     await edit(call, f"Очистить очередь {escape(scope_title(subject, sg))} полностью?",
-               kb([("🧹 Да, очистить", f"ecy:{subject['id']}:{sg}"), ("⬅️ Назад", f"e:{subject['id']}:{sg}")]))
+               kb([("Да, очистить", f"ecy:{subject['id']}:{sg}"), ("Назад", f"e:{subject['id']}:{sg}")]))
     await call.answer()
 
 
@@ -764,18 +808,18 @@ async def cb_edit_clear_confirm(call: CallbackQuery, db: Database, qs: QueueServ
 async def members_view(db: Database, member: dict):
     group = await db.get_group(member["group_id"])
     members = await db.list_members(group["id"])
-    lines = [f"👥 <b>Участники ({len(members)})</b>", "✅ вошёл в бота · ⏳ ещё нет", ""]
+    lines = [f"<b>Участники ({len(members)})</b>", ""]
     current_sg = None
     for m in members:
         if group["subgroups_count"] > 1 and m["subgroup"] != current_sg:
             current_sg = m["subgroup"]
             lines.append(f"<b>Подгруппа {current_sg}</b>")
-        status = "✅" if m["tg_id"] else "⏳"
-        crown = " 👑" if m["is_headman"] else ""
-        lines.append(f"{status} {escape(m['full_name'])}{crown} — <code>{m['code']}</code>")
+        role = " (староста)" if m["is_headman"] else ""
+        status = "" if m["tg_id"] else " · ещё не вошёл"
+        lines.append(f"{escape(m['full_name'])}{role} — <code>{m['code']}</code>{status}")
     markup = kb(
-        [("➕ Добавить", "ama"), ("➖ Удалить", "amr")],
-        [("🔑 Выдать новый код", "amc")],
+        [("Добавить", "ama"), ("Удалить", "amr")],
+        [("Выдать новый код", "amc")],
         [BACK_ADMIN],
     )
     return "\n".join(lines), markup
@@ -789,7 +833,7 @@ async def cb_members(call: CallbackQuery, state: FSMContext, db: Database, membe
     text, markup = await members_view(db, member)
     if len(text) > 4000:
         await call.message.answer(text[:4000])
-        text = "👥 Список выше."
+        text = "Список выше."
     await edit(call, text, markup)
     await call.answer()
 
@@ -801,7 +845,7 @@ async def cb_members_add(call: CallbackQuery, state: FSMContext, db: Database, m
     group = await db.get_group(member["group_id"])
     await state.set_state(AddMembers.text)
     await edit(call, "Отправьте новых участников.\n" + members_format_hint(group["subgroups_count"]),
-               kb([("⬅️ Отмена", "am")]))
+               kb([("Отмена", "am")]))
     await call.answer()
 
 
@@ -814,20 +858,20 @@ async def members_add(message: Message, state: FSMContext, bot: Bot, db: Databas
     parsed, errors = parse_members(message.text, group["subgroups_count"])
     if errors or not parsed:
         bad = "\n".join(f"• {escape(e)}" for e in errors[:15])
-        await message.answer(f"⚠️ Не удалось разобрать:\n{bad}\n\n{members_format_hint(group['subgroups_count'])}")
+        await message.answer(f"Не удалось разобрать:\n{bad}\n\n{members_format_hint(group['subgroups_count'])}")
         return
     await state.clear()
     created = [await db.add_member(group["id"], name, sg) for name, sg in parsed]
     me = await bot.get_me()
     text, markup = await members_view(db, member)
-    await send_long(message, "✅ Добавлены участники:\n" + codes_text(created, me.username))
+    await send_long(message, "Добавлены участники:\n" + codes_text(created, me.username))
     await send_long(message, text, reply_markup=markup)
 
 
 async def pick_member_view(db: Database, member: dict, prefix: str, title: str):
     members = [m for m in await db.list_members(member["group_id"]) if m["id"] != member["id"]]
     rows = [[(f"{m['full_name']} (подгр. {m['subgroup']})", f"{prefix}:{m['id']}")] for m in members]
-    rows.append([("⬅️ Назад", "am")])
+    rows.append([("Назад", "am")])
     return title, kb(*rows)
 
 
@@ -856,7 +900,7 @@ async def cb_members_remove_ask(call: CallbackQuery, db: Database, member: dict 
     if not target:
         return
     await edit(call, f"Удалить {escape(target['full_name'])} из группы? Он пропадёт из всех очередей.",
-               kb([("🗑 Да, удалить", f"amry:{target['id']}"), ("⬅️ Назад", "amr")]))
+               kb([("Да, удалить", f"amry:{target['id']}"), ("Назад", "amr")]))
     await call.answer()
 
 
@@ -891,9 +935,9 @@ async def cb_members_code_new(call: CallbackQuery, bot: Bot, db: Database, membe
     if not target:
         return
     code = await db.regenerate_code(target["id"])
-    await notify(bot, target["tg_id"], "🔑 Староста сбросил ваш код входа. Попросите у него новый и отправьте /start.")
-    await edit(call, f"🔑 Новый код для {escape(target['full_name'])}: <code>{code}</code>",
-               kb([("⬅️ К участникам", "am")]))
+    await notify(bot, target["tg_id"], "Староста сбросил ваш код входа. Попросите у него новый и отправьте /start.")
+    await edit(call, f"Новый код для {escape(target['full_name'])}: <code>{code}</code>",
+               kb([("К участникам", "am")]))
     await call.answer()
 
 
@@ -915,23 +959,23 @@ async def cb_google(call: CallbackQuery, state: FSMContext, db: Database, sheets
     if not await guard_headman(call, member):
         return
     group = await db.get_group(member["group_id"])
-    lines = ["📊 <b>Google Таблицы</b>", ""]
+    lines = ["<b>Google Таблицы</b>", ""]
     if not sheets.available:
-        lines.append("⚠️ На сервере бота не настроен ключ сервисного аккаунта Google (см. README).")
+        lines.append("На сервере бота не настроен ключ сервисного аккаунта Google (см. README).")
     else:
         lines.append(f"1. Создайте Google Таблицу и откройте доступ <b>редактора</b> для\n"
                      f"<code>{escape(sheets.service_email() or '?')}</code>")
         lines.append("2. Укажите ссылку на неё кнопкой ниже.")
     lines.append(f"\nТаблица: {escape(group['sheet_url']) if group['sheet_url'] else 'не указана'}")
     lines.append(
-        "\n⬆️ <b>Экспорт</b> создаёт отдельный лист для каждой очереди.\n"
-        "⬇️ <b>Импорт</b> берёт листы с теми же названиями и <b>заменяет</b> очереди в боте "
+        "\n<b>Экспорт</b> создаёт отдельный лист для каждой очереди.\n"
+        "<b>Импорт</b> берёт листы с теми же названиями и <b>заменяет</b> очереди в боте "
         "порядком из таблицы (по ФИО, столбец B). Чтобы отметить уважительную причину, "
         "заполните столбец D."
     )
-    rows = [[("🔗 Указать таблицу", "agl")]]
+    rows = [[("Указать таблицу", "agl")]]
     if group["sheet_url"]:
-        rows.append([("⬆️ Экспорт в таблицу", "age"), ("⬇️ Импорт из таблицы", "agi")])
+        rows.append([("Экспорт в таблицу", "age"), ("Импорт из таблицы", "agi")])
     rows.append([BACK_ADMIN])
     await edit(call, "\n".join(lines), kb(*rows))
     await call.answer()
@@ -943,7 +987,7 @@ async def cb_google_link(call: CallbackQuery, state: FSMContext, member: dict | 
         return
     await state.set_state(SetSheet.url)
     await edit(call, "Отправьте ссылку на Google Таблицу (https://docs.google.com/spreadsheets/…):",
-               kb([("⬅️ Отмена", "ag")]))
+               kb([("Отмена", "ag")]))
     await call.answer()
 
 
@@ -958,7 +1002,7 @@ async def google_link(message: Message, state: FSMContext, db: Database, member:
         return
     await state.clear()
     await db.set_sheet_url(member["group_id"], url)
-    await message.answer("✅ Ссылка сохранена.", reply_markup=kb([("📊 К Google Таблицам", "ag")]))
+    await message.answer("Ссылка сохранена.", reply_markup=kb([("К Google Таблицам", "ag")]))
 
 
 @router.callback_query(F.data == "age")
@@ -981,9 +1025,9 @@ async def cb_google_export(call: CallbackQuery, db: Database, qs: QueueService, 
     try:
         await asyncio.to_thread(sheets.export, group["sheet_url"], data)
     except SheetsError as e:
-        await call.message.answer(f"❌ {escape(str(e))}")
+        await call.message.answer(f"Ошибка: {escape(str(e))}")
         return
-    await call.message.answer(f"✅ Экспортировано очередей: {len(data)}.")
+    await call.message.answer(f"Экспортировано очередей: {len(data)}.")
 
 
 @router.callback_query(F.data == "agi")
@@ -991,7 +1035,7 @@ async def cb_google_import_ask(call: CallbackQuery, member: dict | None):
     if not await guard_headman(call, member):
         return
     await edit(call, "Очереди в боте будут заменены данными из таблицы. Продолжить?",
-               kb([("⬇️ Да, импортировать", "agiy"), ("⬅️ Назад", "ag")]))
+               kb([("Да, импортировать", "agiy"), ("Назад", "ag")]))
     await call.answer()
 
 
@@ -1008,7 +1052,7 @@ async def cb_google_import(call: CallbackQuery, db: Database, qs: QueueService, 
     try:
         sheet_data = await asyncio.to_thread(sheets.read_all, group["sheet_url"])
     except SheetsError as e:
-        await call.message.answer(f"❌ {escape(str(e))}")
+        await call.message.answer(f"Ошибка: {escape(str(e))}")
         return
 
     report = []
@@ -1027,10 +1071,10 @@ async def cb_google_import(call: CallbackQuery, db: Database, qs: QueueService, 
         await qs.replace(subject["id"], sg, items)
         line = f"• {escape(title)}: {len(items)} чел."
         if unknown:
-            line += f"\n  ⚠️ не найдены в группе: {escape(', '.join(unknown[:10]))}"
+            line += f"\n  не найдены в группе: {escape(', '.join(unknown[:10]))}"
         report.append(line)
 
     if not report:
         await call.message.answer("В таблице нет листов с названиями очередей. Сначала сделайте экспорт.")
         return
-    await send_long(call.message, "✅ Импорт завершён:\n" + "\n".join(report))
+    await send_long(call.message, "Импорт завершён:\n" + "\n".join(report))

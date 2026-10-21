@@ -16,7 +16,7 @@ CODE_RE = re.compile(r"^[A-Za-z0-9]{6}$")
 @router.message(F.text)
 async def any_text(message: Message, state: FSMContext, db: Database, member: dict | None):
     if member:
-        await message.answer("Не понимаю 🤔 Откройте меню: /menu")
+        await message.answer("Не понимаю. Откройте меню: /menu")
     elif CODE_RE.match(message.text.strip()):
         await try_login(message, state, db, message.text)
     else:

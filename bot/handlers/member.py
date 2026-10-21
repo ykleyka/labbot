@@ -29,13 +29,13 @@ class Excuse(StatesGroup):
 async def subjects_view(db: Database, member: dict):
     subjects = await db.list_subjects(member["group_id"])
     if not subjects:
-        text = "📚 Предметов пока нет."
+        text = "Предметов пока нет."
         if member["is_headman"]:
-            text += " Добавьте их: 👑 Управление → 📚 Предметы."
-        return text, kb([("⬅️ Главное меню", "m:main")])
-    rows = [[(f"📘 {s['name']}", f"q:{s['id']}")] for s in subjects]
-    rows.append([("⬅️ Главное меню", "m:main")])
-    return "📋 Выберите предмет:", kb(*rows)
+            text += " Добавьте их: Управление → Предметы."
+        return text, kb([("Главное меню", "m:main")])
+    rows = [[(f"{s['name']}", f"q:{s['id']}")] for s in subjects]
+    rows.append([("Главное меню", "m:main")])
+    return "Выберите предмет:", kb(*rows)
 
 
 async def lessons_view(db: Database, member: dict):
@@ -43,13 +43,13 @@ async def lessons_view(db: Database, member: dict):
         l for l in await db.group_lessons(member["group_id"])
         if l["subgroup"] in (0, member["subgroup"])
     ][:15]
-    lines = ["📅 <b>Ближайшие пары</b>", ""]
+    lines = ["<b>Ближайшие пары</b>", ""]
     if not lessons:
         lines.append("Пары пока не запланированы.")
     for l in lessons:
         sub = f" (подгр. {l['subgroup']})" if l["subgroup"] else ""
         lines.append(f"• {fmt_dt(lesson_bounds(l)[0])} — {escape(l['subject_name'])}{sub}")
-    return "\n".join(lines), kb([("⬅️ Главное меню", "m:main")])
+    return "\n".join(lines), kb([("Главное меню", "m:main")])
 
 
 async def queue_view(db: Database, qs: QueueService, member: dict, subject: dict):
@@ -59,14 +59,14 @@ async def queue_view(db: Database, qs: QueueService, member: dict, subject: dict
     pos = await qs.position(sid, sg, member["id"])
     if pos is None:
         text += "\n\nВы не записаны в очередь."
-        rows = [[("✋ Буду сдавать", f"j:{sid}")]]
+        rows = [[("Буду сдавать", f"j:{sid}")]]
     else:
         text += f"\n\nВаше место: <b>{pos}</b>"
         rows = [
-            [("🚫 Отменить сдачу", f"c:{sid}"), ("✅ Я сдал", f"dn:{sid}")],
-            [("🔁 Поменяться местами", f"sw:{sid}")],
+            [("Отменить сдачу", f"c:{sid}"), ("Я сдал", f"dn:{sid}")],
+            [("Поменяться местами", f"sw:{sid}")],
         ]
-    rows.append([("🔄 Обновить", f"q:{sid}"), ("⬅️ К предметам", "m:queues")])
+    rows.append([("Обновить", f"q:{sid}"), ("К предметам", "m:queues")])
     return text, kb(*rows)
 
 
@@ -155,13 +155,13 @@ async def cb_cancel(call: CallbackQuery, db: Database, qs: QueueService, member:
             "Если вы отсутствуете по уважительной причине, ваше место сохранится до следующей пары."
         )
         markup = kb(
-            [("🟡 Уважительная причина", f"cx:{sid}:1")],
+            [("Уважительная причина", f"cx:{sid}:1")],
             [("↩️ Переместиться в конец", f"cx:{sid}:0")],
-            [("⬅️ Назад", f"q:{sid}")],
+            [("Назад", f"q:{sid}")],
         )
     else:
         text = "Убрать вас из очереди? Записаться снова можно в любой момент, но уже в конец."
-        markup = kb([("✅ Да, убрать", f"cx:{sid}:0"), ("⬅️ Назад", f"q:{sid}")])
+        markup = kb([("Да, убрать", f"cx:{sid}:0"), ("Назад", f"q:{sid}")])
     await edit(call, text, markup)
     await call.answer()
 
@@ -185,8 +185,8 @@ async def cb_cancel_confirm(
     elif excused:
         await state.set_state(Excuse.reason)
         await state.update_data(subject_id=sid)
-        await edit(call, "✍️ Напишите коротко причину отсутствия (её увидит староста):",
-                   kb([("⬅️ Отмена", f"q:{sid}")]))
+        await edit(call, "Напишите коротко причину отсутствия (её увидит староста):",
+                   kb([("Отмена", f"q:{sid}")]))
         await call.answer()
         return
     else:
@@ -221,12 +221,12 @@ async def excuse_reason(message: Message, state: FSMContext, bot: Bot, db: Datab
     await notify_if_first_changed(bot, db, qs, subject, sg, old_first)
     await notify_headmen(
         bot, db, member["group_id"],
-        f"🟡 <b>{escape(member['full_name'])}</b> отсутствует по уважительной причине "
+        f"<b>{escape(member['full_name'])}</b> отсутствует по уважительной причине "
         f"({escape(scope_title(subject, sg))}): {escape(reason)}",
         exclude_id=member["id"],
     )
     text, markup = await queue_view(db, qs, member, subject)
-    await message.answer("✅ Отмечено. Ваше место в очереди сохранится до следующей пары.")
+    await message.answer("Отмечено. Ваше место в очереди сохранится до следующей пары.")
     await message.answer(text, reply_markup=markup)
 
 
@@ -237,7 +237,7 @@ async def cb_done(call: CallbackQuery, db: Database, member: dict | None):
         return
     sid = subject["id"]
     await edit(call, "Подтвердите, что вы сдали лабораторную: вас уберут из очереди.",
-               kb([("✅ Да, сдал", f"dny:{sid}"), ("⬅️ Назад", f"q:{sid}")]))
+               kb([("Да, сдал", f"dny:{sid}"), ("Назад", f"q:{sid}")]))
     await call.answer()
 
 
@@ -252,7 +252,7 @@ async def cb_done_confirm(call: CallbackQuery, bot: Bot, db: Database, qs: Queue
     await notify_if_first_changed(bot, db, qs, subject, sg, old_first)
     text, markup = await queue_view(db, qs, member, subject)
     await edit(call, text, markup)
-    await call.answer("🎉 Поздравляем со сдачей!" if removed else "Вас нет в очереди")
+    await call.answer("Поздравляем со сдачей!" if removed else "Вас нет в очереди")
 
 
 # ---------- обмен местами ----------
@@ -276,8 +276,8 @@ async def cb_swap_list(call: CallbackQuery, db: Database, qs: QueueService, memb
     if not rows:
         await call.answer("Поменяться не с кем: в очереди нет других участников, вошедших в бота", show_alert=True)
         return
-    rows.append([("⬅️ Назад", f"q:{sid}")])
-    await edit(call, f"🔁 Вы на {my_pos}-м месте. С кем хотите поменяться?\n"
+    rows.append([("Назад", f"q:{sid}")])
+    await edit(call, f"Вы на {my_pos}-м месте. С кем хотите поменяться?\n"
                      f"Выше — пойти раньше, ниже — пойти позже.", kb(*rows))
     await call.answer()
 
@@ -299,10 +299,10 @@ async def cb_swap_request(call: CallbackQuery, bot: Bot, db: Database, qs: Queue
     direction = "раньше" if target_pos > my_pos else "позже"
     sent = await notify(
         bot, target["tg_id"],
-        f"🔁 <b>{escape(member['full_name'])}</b> (место {my_pos}) предлагает поменяться местами "
+        f"<b>{escape(member['full_name'])}</b> (место {my_pos}) предлагает поменяться местами "
         f"в очереди <b>{escape(scope_title(subject, sg))}</b>.\n"
         f"Вы сейчас на месте {target_pos}. Если согласитесь, пойдёте {direction}.",
-        kb([("✅ Согласен", f"swa:{swap_id}"), ("❌ Отказаться", f"swd:{swap_id}")]),
+        kb([("Согласен", f"swa:{swap_id}"), ("Отказаться", f"swd:{swap_id}")]),
     )
     if not sent:
         await db.set_swap_status(swap_id, "cancelled")
@@ -351,9 +351,9 @@ async def cb_swap_accept(call: CallbackQuery, bot: Bot, db: Database, qs: QueueS
     my_pos = await qs.position(subject["id"], sg, member["id"])
     their_pos = await qs.position(subject["id"], sg, requester["id"])
     title = escape(scope_title(subject, sg))
-    await edit(call, f"✅ Вы поменялись местами с {escape(requester['full_name'])} ({title}). Ваше место: {my_pos}.")
+    await edit(call, f"Вы поменялись местами с {escape(requester['full_name'])} ({title}). Ваше место: {my_pos}.")
     await notify(bot, requester["tg_id"],
-                 f"✅ {escape(member['full_name'])} согласился поменяться местами ({title}). Ваше место: {their_pos}.")
+                 f"{escape(member['full_name'])} согласился поменяться местами ({title}). Ваше место: {their_pos}.")
     await notify_if_first_changed(bot, db, qs, subject, sg, old_first)
     await call.answer()
 
@@ -369,7 +369,7 @@ async def cb_swap_decline(call: CallbackQuery, bot: Bot, db: Database, member: d
     await edit(call, "Вы отказались от обмена.")
     if requester:
         await notify(bot, requester["tg_id"],
-                     f"❌ {escape(member['full_name'])} отказался меняться местами ({escape(subject['name'])}).")
+                     f"{escape(member['full_name'])} отказался меняться местами ({escape(subject['name'])}).")
     await call.answer()
 
 
@@ -394,12 +394,12 @@ async def cb_poll_answer(call: CallbackQuery, bot: Bot, db: Database, qs: QueueS
     await db.set_answer(lesson["id"], member["id"], answer == "1")
     if answer == "1":
         pos, _ = await qs.add(subject["id"], sg, member["id"])
-        result = f"✅ Ваш ответ: буду сдавать. Ваше место в очереди: <b>{pos}</b>"
+        result = f"Ваш ответ: буду сдавать. Ваше место в очереди: <b>{pos}</b>"
     else:
         old_first = await first_active_id(qs, subject["id"], sg)
         await qs.remove(subject["id"], sg, member["id"])
         await notify_if_first_changed(bot, db, qs, subject, sg, old_first)
-        result = "❌ Ваш ответ: не буду сдавать. Вы не в очереди."
+        result = "Ваш ответ: не буду сдавать. Вы не в очереди."
     await edit(call, f"{poll_text(lesson, subject)}\n\n{result}\n<i>Ответ можно изменить.</i>",
                poll_markup(lesson["id"]))
     await call.answer("Ответ сохранён")

@@ -21,9 +21,9 @@ class Auth(StatesGroup):
 
 
 HELP_TEXT = (
-    "ℹ️ <b>Как пользоваться ботом</b>\n\n"
+    "<b>Как пользоваться ботом</b>\n\n"
     "<b>Участникам</b>\n"
-    "• 📋 <b>Очереди</b> — посмотреть очередь по предмету, записаться («Буду сдавать»), "
+    "• <b>Очереди</b> — посмотреть очередь по предмету, записаться («Буду сдавать»), "
     "отменить сдачу, отметить «Я сдал» или предложить кому-то поменяться местами.\n"
     "• Если отменить сдачу <i>во время пары</i>, вы переместитесь в конец очереди. "
     "Если вы отсутствуете по уважительной причине, укажите её: место сохранится.\n"
@@ -31,7 +31,7 @@ HELP_TEXT = (
     "«Нет» убирает из неё.\n\n"
     "<b>Старосте</b>\n"
     "• /creategroup — создать группу и получить коды участников.\n"
-    "• 👑 Управление: предметы, пары и опросы, редактирование очереди, участники, Google Таблицы.\n\n"
+    "• Управление: предметы, пары и опросы, редактирование очереди, участники, Google Таблицы, удаление группы.\n\n"
     "Команды: /menu, /queue, /lessons, /logout, /cancel"
 )
 
@@ -39,15 +39,15 @@ HELP_TEXT = (
 async def main_menu(db: Database, member: dict):
     group = await db.get_group(member["group_id"])
     subgroup = f" · подгруппа {member['subgroup']}" if group["subgroups_count"] > 1 else ""
-    role = "\n👑 Вы староста" if member["is_headman"] else ""
+    role = "\nВы староста" if member["is_headman"] else ""
     text = (
-        f"👤 <b>{escape(member['full_name'])}</b>\n"
+        f"<b>{escape(member['full_name'])}</b>\n"
         f"Группа: {escape(group['name'])}{subgroup}{role}\n\nВыберите действие:"
     )
-    rows = [[("📋 Очереди", "m:queues")], [("📅 Ближайшие пары", "m:lessons")]]
+    rows = [[("Очереди", "m:queues")], [("Ближайшие пары", "m:lessons")]]
     if member["is_headman"]:
-        rows.append([("👑 Управление группой", "adm")])
-    rows.append([("ℹ️ Помощь", "m:help")])
+        rows.append([("Управление группой", "adm")])
+    rows.append([("Помощь", "m:help")])
     return text, kb(*rows)
 
 
@@ -55,15 +55,15 @@ async def try_login(message: Message, state: FSMContext, db: Database, raw_code:
     code = raw_code.strip().upper()
     found = await db.get_member_by_code(code)
     if not found:
-        await message.answer("❌ Код не найден. Проверьте его и отправьте ещё раз (или /cancel).")
+        await message.answer("Код не найден. Проверьте его и отправьте ещё раз (или /cancel).")
         return
     if found["tg_id"] and found["tg_id"] != message.from_user.id:
-        await message.answer("⚠️ Этот код уже привязан к другому аккаунту. Попросите старосту выдать новый код.")
+        await message.answer("Этот код уже привязан к другому аккаунту. Попросите старосту выдать новый код.")
         return
     await db.link_member(found["id"], message.from_user.id)
     await state.clear()
     member = await db.get_member(found["id"])
-    await message.answer(f"✅ Вы вошли как <b>{escape(member['full_name'])}</b>.")
+    await message.answer(f"Вы вошли как <b>{escape(member['full_name'])}</b>.")
     text, markup = await main_menu(db, member)
     await message.answer(text, reply_markup=markup)
 
@@ -89,9 +89,9 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext,
         return
     await state.set_state(Auth.code)
     await message.answer(
-        "👋 Привет! Это бот для очереди на сдачу лабораторных.\n\n"
-        "🔑 Отправьте <b>код участника</b>, который выдал староста.\n"
-        "👑 Если вы староста и группы ещё нет, отправьте /creategroup."
+        "Привет! Это бот для очереди на сдачу лабораторных.\n\n"
+        "Отправьте <b>код участника</b>, который выдал староста.\n"
+        "Если вы староста и группы ещё нет, отправьте /creategroup."
     )
 
 
@@ -127,7 +127,7 @@ async def cmd_help(message: Message):
 
 @router.callback_query(F.data == "m:help")
 async def cb_help(call: CallbackQuery):
-    await edit(call, HELP_TEXT, kb([("⬅️ Главное меню", "m:main")]))
+    await edit(call, HELP_TEXT, kb([("Главное меню", "m:main")]))
     await call.answer()
 
 

@@ -247,6 +247,29 @@ async def main():
     await click(dp, bot, HEAD, f"amry:{ivan_id}")
     assert await db.get_member(ivan_id) is None and await qs.ids(matan, 0) == [petr_id]
 
+    # --- удаление группы ---
+    await click(dp, bot, PETR, "agdel")  # не староста
+    assert await db.get_group(1) is not None
+    await click(dp, bot, HEAD, "agdel")
+    await text(dp, bot, HEAD, "Не та группа")
+    assert await db.get_group(1) is not None
+    await text(dp, bot, HEAD, "ивт-21")
+    assert await db.get_group(1) is None
+    assert await db.fetchall("SELECT * FROM members") == []
+    assert await db.fetchall("SELECT * FROM subjects") == []
+    assert await db.fetchall("SELECT * FROM queue_entries") == []
+    assert await db.fetchall("SELECT * FROM lessons") == []
+    assert "удалил группу" in messages_to(session, ANNA)[-1]
+    await text(dp, bot, HEAD, "/creategroup")  # после удаления можно создать новую
+    assert "Шаг 1/4" in messages_to(session, HEAD)[-1]
+
+    # в текстах бота не осталось эмодзи
+    import pathlib
+    import re
+    emoji = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿⌀-⏿]")
+    for path in pathlib.Path("bot").rglob("*.py"):
+        assert not emoji.search(path.read_text(encoding="utf-8")), path
+
     # ни одна кнопка не должна была уйти в fallback
     from aiogram.methods import AnswerCallbackQuery
     stale = [m for m in session.sent if isinstance(m, AnswerCallbackQuery) and "устарела" in (m.text or "")]

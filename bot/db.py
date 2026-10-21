@@ -102,6 +102,10 @@ class Database:
     async def get_group(self, group_id: int) -> dict | None:
         return await self.fetchone("SELECT * FROM groups WHERE id = ?", group_id)
 
+    async def delete_group(self, group_id: int) -> None:
+        """Удаляет группу вместе с участниками, предметами, парами и очередями (ON DELETE CASCADE)."""
+        await self.execute("DELETE FROM groups WHERE id = ?", group_id)
+
     async def set_sheet_url(self, group_id: int, url: str) -> None:
         await self.execute("UPDATE groups SET sheet_url = ? WHERE id = ?", url, group_id)
 

@@ -60,21 +60,21 @@ async def render_queue(
     db: Database, qs: QueueService, subject: dict, subgroup: int, viewer_id: int | None = None
 ) -> str:
     entries = await qs.entries(subject["id"], subgroup)
-    lines = [f"📋 <b>{escape(scope_title(subject, subgroup))}</b>"]
+    lines = [f"<b>{escape(scope_title(subject, subgroup))}</b>"]
 
     active = await active_lesson(db, subject["id"], subgroup)
     if active:
-        lines.append(f"🟢 Идёт пара (до {fmt_time(lesson_bounds(active)[1])})")
+        lines.append(f"Идёт пара (до {fmt_time(lesson_bounds(active)[1])})")
     else:
         nxt = await next_lesson(db, subject["id"], subgroup)
-        lines.append(f"📅 Следующая пара: {fmt_dt(lesson_bounds(nxt)[0])}" if nxt else "📅 Пары не запланированы")
+        lines.append(f"Следующая пара: {fmt_dt(lesson_bounds(nxt)[0])}" if nxt else "Пары не запланированы")
     lines.append("")
 
     if not entries:
         lines.append("Очередь пуста.")
     for i, e in enumerate(entries, 1):
-        mark = " — 🟡 уваж. причина" if e["excused"] else ""
-        me = " 👈 вы" if viewer_id == e["member_id"] else ""
+        mark = " — уваж. причина" if e["excused"] else ""
+        me = " (вы)" if viewer_id == e["member_id"] else ""
         lines.append(f"{i}. {escape(e['full_name'])}{mark}{me}")
     return "\n".join(lines)
 
@@ -106,7 +106,7 @@ async def notify_if_first_changed(
     if first and first["member_id"] != old_first_id:
         await notify(
             bot, first["tg_id"],
-            f"🔔 Подошла ваша очередь сдавать лабораторную по <b>{escape(subject['name'])}</b>!",
+            f"Подошла ваша очередь сдавать лабораторную по <b>{escape(subject['name'])}</b>!",
         )
 
 
@@ -120,16 +120,16 @@ async def first_active_id(qs: QueueService, subject_id: int, subgroup: int) -> i
 def poll_text(lesson: dict, subject: dict) -> str:
     start, _ = lesson_bounds(lesson)
     return (
-        f"📣 <b>Опрос</b>\n"
+        f"<b>Опрос</b>\n"
         f"Пара по <b>{escape(scope_title(subject, lesson['subgroup']))}</b>\n"
-        f"🗓 {fmt_dt(start)}\n\n"
+        f"{fmt_dt(start)}\n\n"
         f"Будете сдавать лабораторную на этой паре?\n"
         f"«Да» — вы встанете в конец очереди (если ещё не в ней), «Нет» — уберём вас из очереди."
     )
 
 
 def poll_markup(lesson_id: int) -> InlineKeyboardMarkup:
-    return kb([("✅ Буду сдавать", f"pa:{lesson_id}:1"), ("❌ Не буду", f"pa:{lesson_id}:0")])
+    return kb([("Буду сдавать", f"pa:{lesson_id}:1"), ("Не буду", f"pa:{lesson_id}:0")])
 
 
 async def send_poll(bot: Bot, db: Database, lesson: dict, subject: dict) -> tuple[int, int]:

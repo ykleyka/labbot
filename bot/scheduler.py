@@ -32,12 +32,12 @@ async def tick(bot: Bot, db: Database, qs: QueueService) -> None:
         if now >= start and not lesson["started_notified"]:
             await db.mark_lesson_started(lesson["id"])
             entries = await qs.entries(sid, sg)
-            text = "🔔 <b>Пара началась!</b>\n\n" + await render_queue(db, qs, subject, sg)
+            text = "<b>Пара началась!</b>\n\n" + await render_queue(db, qs, subject, sg)
             first = next((e for e in entries if not e["excused"]), None)
             for m in await db.scope_members(subject["group_id"], sg):
                 extra = ""
                 if first and m["id"] == first["member_id"]:
-                    extra = f"\n\n👉 <b>Вы первый — ваша очередь сдавать {escape(subject['name'])}!</b>"
+                    extra = f"\n\n<b>Вы первый — ваша очередь сдавать {escape(subject['name'])}!</b>"
                 await notify(bot, m["tg_id"], text + extra)
 
 
